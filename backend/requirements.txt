@@ -1,0 +1,14 @@
+langgraph
+groq
+qdrant-client
+psycopg2-binary
+sentence-transformers
+crawl4ai
+spacy
+fastapi
+uvicorn
+python-dotenv
+sqlalchemy
+feedparser
+en_core_web_sm 
+ yfinance
