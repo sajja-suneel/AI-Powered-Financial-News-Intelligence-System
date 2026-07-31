@@ -42,38 +42,27 @@ def get_query_intent_prompt(user_query: str) -> str:
     Return ONLY a JSON object with keys "company", "sector", "theme". Do not include any explanations.
     """
 
-def get_context_explanation_prompt(user_query: str, context_str: str) -> str:
+# src/utils/prompts.py
+
+def get_context_explanation_prompt(user_query: str, context_str: str, current_time: str) -> str:
     """
-    Directs the LLM to synthesize matching context into a premium, 
-    structured financial intelligence report. Supports fallback general knowledge.
+    Directs the LLM to answer ONLY the user's question directly, using the provided context,
+    without adding unrelated facts or boilerplate.
     """
     return f"""
     You are an expert Financial Intelligence Analyst.
-    Your task is to answer the user query: "{user_query}"
     
-    Using the matching database context below:
+    [TEMPORAL CONTEXT]: The current local system date and time is: {current_time}.
+    Use this date/time anchor to resolve temporal references (like 'today', 'yesterday').
+    
+    User Query: "{user_query}"
+    
+    Matching Database Context:
     {context_str}
     
-    You must format your final response strictly using the following structure:
-
-    ### 📊 Executive Summary
-    - [Summarize and explain the requested information directly in 3 to 5 lines. If the database context does not contain the direct answer, you MUST use your own pre-trained financial knowledge to answer the user's question fully and accurately. Clearly note if you are supplementing with general market knowledge.]
-
-    ### 📈 Market Sentiment & Impact
-    - **Asset Impacted**: [Identify target stocks/indices, e.g. NIFTY 50, SBI, HDFC]
-    - **Sentiment Direction**: [Positive / Negative / Neutral]
-    - **Impact Factor**: [Briefly explain the driver or general index behavior]
-
-    ### 🔍 Key Supporting Facts
-    - [Fact 1: If using general knowledge, list the top answers directly (e.g. the top 5 company names and details). If using context, extract numbers from context.]
-    - [Fact 2: Additional supporting data or general index facts]
-
-    ### 📑 References
-    - Source: [Identify document sources or 'General Financial Knowledge']
-    - Link: [Include clean URL links if available, or official exchange links like https://www.nseindia.com]
-    
-    Rules:
-    - Never mention website boilerplate, sitemap links, or navigation buttons.
-    - Keep tone professional, objective, and analytical.
-    - If the user query asks for a list (like Top 5 Companies), you must list those 5 items clearly in the Executive Summary or Key Supporting Facts using your pre-trained knowledge if the database context is empty.
+    Rules for answering:
+    1. Answer the User Query DIRECTLY and CONCISELY.
+    2. STRICT RELEVANCE: Only include details, stocks, rates, or facts that directly answer the query. If the context contains details about USD/INR rates, gold, or other companies that have NOTHING to do with the query, DO NOT include them.
+    3. If the context does not contain the answer, respond with "I don't have information about that."
+    4. Formatting: Output the answer in a clean, readable markdown format. Only include relevant sections.
     """

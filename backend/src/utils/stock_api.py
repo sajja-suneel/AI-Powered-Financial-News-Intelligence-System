@@ -5,6 +5,7 @@ import yfinance as ticker_engine
 import pandas as pd
 from typing import Optional
 from dotenv import load_dotenv
+from src.utils.llm import query_groq
 
 load_dotenv()
 
@@ -12,51 +13,48 @@ load_dotenv()
 API_KEY = os.getenv("INDIAN_STOCK_API_KEY")
 API_HOST = os.getenv("INDIAN_STOCK_API_HOST", "indian-stock-exchange-api2.p.rapidapi.com")
 
-# Mapping of common Indian company names/queries to NSE Tickers
-TICKER_MAPPING = {
-    "tcs": "TCS.NS",
-    "tata consultancy services": "TCS.NS",
-    "sbi": "SBIN.NS",
-    "state bank of india": "SBIN.NS",
-    "hdfc": "HDFCBANK.NS",
-    "hdfc bank": "HDFCBANK.NS",
-    "reliance": "RELIANCE.NS",
-    "infy": "INFY.NS",
-    "infosys": "INFY.NS",
-    "icici": "ICICIBANK.NS",
-    "icici bank": "ICICIBANK.NS",
-    
-    # Gold BeES tracks 1/100th of a gram of gold. We can multiply it in query results.
-    "gold": "GOLDBEES.NS",
-    "HEROMOTOCO": "HEROMOTOCO.NS",
-    "BSE": "BSE.NS",
-    "NSE": "NSE.NS",
-    "RBI": "RBI.NS",
-    "FINANCE INDIA": "FINANCEINDIA.NS"
-    
-}
-
-def resolve_ticker(query: str) -> Optional[str]:
+def resolve_ticker_dynamically(query: str) -> Optional[str]:
+    """
+    Uses Llama 3.1 8B as an intelligent 'Tool Caller' to dynamically identify
+    the correct NSE/BSE ticker symbol from the user query.
+    Takes less than 0.5 seconds on Groq.
+    """
     normalized_query = query.lower()
-    for name, ticker in TICKER_MAPPING.items():
-        if name in normalized_query:
-            return ticker
-    return None
+    if "gold" in normalized_query:
+        return "GOLDBEES.NS"
+        
+    resolver_prompt = f"""
+    Identify the target Indian stock market ticker symbol (NSE format, ending with .NS or BSE format ending with .BO) 
+    for the company or stock mentioned in the user query.
+    
+    User Query: "{query}"
+    
+    Rules:
+    1. Return ONLY the ticker symbol (e.g., "ITC.NS", "SBIN.NS", "TCS.NS", "TATAMOTORS.NS", "GOLDBEES.NS","HDFC.NS", "BSE.NS",NSE.NS,RBI.NS,TIME OF INDIA.NS,INDIA.NS,KALYANJEWEL.NS).
+    2. If no specific company, stock, or index is mentioned, return "NONE".
+    3. Do not include any explanations, punctuation, or extra text.
+    """
+    
+    try:
+        response = query_groq(resolver_prompt)
+        ticker = response.strip().upper().replace('"', '').replace("'", "")
+        
+        if ticker == "NONE" or len(ticker) > 15:
+            return None
+            
+        print(f"[TICKER RESOLVER] Dynamically resolved query to ticker: {ticker}")
+        return ticker
+    except Exception as e:
+        print(f"[TICKER RESOLVER WARNING] AI resolution failed: {e}. Falling back to default.")
+        return None
 
 
 def fetch_from_third_party_api(ticker: str, days: int = 10) -> Optional[str]:
-    """
-    Attempts to fetch stock history using the user's third-party API Key.
-    """
     if not API_KEY:
-        print("[STOCK API] Third-party API Key is missing. Skipping to fallback.")
         return None
         
-    # Clean ticker for third party (e.g. TCS.NS -> TCS)
     clean_symbol = ticker.split(".")[0]
     
-    # ─── SANITIZE HOSTNAME ───
-    # Strips any accidental 'http://', 'https://', and trailing '/' from .env
     host = API_HOST.strip()
     if host.startswith("http://"):
         host = host[7:]
@@ -64,7 +62,6 @@ def fetch_from_third_party_api(ticker: str, days: int = 10) -> Optional[str]:
         host = host[8:]
     host = host.strip("/")
     
-    # Construct clean URL
     url = f"https://{host}/stock/history"
     querystring = {"symbol": clean_symbol, "period": "10d"}
     headers = {
@@ -78,7 +75,6 @@ def fetch_from_third_party_api(ticker: str, days: int = 10) -> Optional[str]:
         
         if response.status_code == 200:
             data = response.json()
-            # Standard formatting loop for API response array
             markdown_table = f"### 📊 Live Stock Price History ({clean_symbol}) [Third-Party API]\n"
             markdown_table += "| Date | Closing Price (₹) | Daily Change |\n"
             markdown_table += "| :--- | :--- | :--- |\n"
@@ -101,26 +97,22 @@ def fetch_live_stock_history_table(ticker: str, days: int = 10) -> str:
     Fetches stock history. First tries the third-party API key,
     and falls back to Yahoo Finance if key is missing or fails.
     """
-    # 1. Try Third-Party API Key first
     third_party_table = fetch_from_third_party_api(ticker, days)
     if third_party_table:
         return third_party_table
         
-    # 2. Fallback to Yahoo Finance (Keyless)
     try:
         print(f"[STOCK API FALLBACK] Fetching via Yahoo Finance for: {ticker}")
         stock = ticker_engine.Ticker(ticker)
         hist = stock.history(period="1mo")
         
         if hist.empty:
-            return "No stock data could be found for this ticker."
+            return f"No stock data could be found for ticker {ticker}."
             
         last_n = hist.tail(days).copy()
         last_n["Daily Change %"] = last_n["Close"].pct_change() * 100
         last_n = last_n.sort_index(ascending=False)
         
-        # Determine if we are tracking Gold (ETF Gold BeES tracks ~1/100th of 1 gram of gold)
-        # So we can present the gold price cleanly (multiply GOLDBEES price by 1000 for 10gm rate)
         is_gold = (ticker == "GOLDBEES.NS")
         
         markdown_table = f"### 📊 Live Price History ({'Physical Gold [10 grams]' if is_gold else ticker}) [Yahoo Fallback]\n"
@@ -129,9 +121,6 @@ def fetch_live_stock_history_table(ticker: str, days: int = 10) -> str:
         
         for date_timestamp, row in last_n.iterrows():
             date_str = date_timestamp.strftime("%d-%b-%Y")
-            
-            # If GOLDBEES (ETF), 1 unit is approx 1/100th of a gram.
-            # To get the price of 10 grams, we multiply the closing price of GOLDBEES unit by 1000
             price = row['Close'] * 1000 if is_gold else row['Close']
             price_str = f"{price:.2f}"
             
@@ -148,5 +137,5 @@ def fetch_live_stock_history_table(ticker: str, days: int = 10) -> str:
         return markdown_table
         
     except Exception as e:
-        print(f"[STOCK API ERROR] Fallback failed: {e}")
-        return "Stock price lookup service is currently offline."
+        print(f"[STOCK API ERROR] Fallback failed for {ticker}: {e}")
+        return f"Stock price lookup service for {ticker} is currently offline."

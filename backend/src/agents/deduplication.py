@@ -27,7 +27,7 @@ def deduplication_subagent(state: AgentState) -> AgentState:
             collection_name=COLLECTION_NAME,
             query=vector,              # Uses 'query' instead of 'query_vector'
             limit=1,
-            score_threshold=0.85
+            score_threshold=0.90
         )
         
         # 3. Populate duplicate parameters inside the shared state

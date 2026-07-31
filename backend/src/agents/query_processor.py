@@ -2,28 +2,23 @@
 import json
 import re
 import uuid
+from datetime import datetime
 from sqlalchemy import text
 from config.database import SessionLocal, qdrant_client
 from src.utils.embeddings import get_embedding_model
 from src.utils.llm import query_groq
 from src.utils.prompts import get_query_intent_prompt, get_context_explanation_prompt
-from src.utils.stock_api import resolve_ticker, fetch_live_stock_history_table
+from src.utils.stock_api import resolve_ticker_dynamically, fetch_live_stock_history_table
 
 model = get_embedding_model()
 COLLECTION_NAME = "financial_news"
 
 def clean_rbi_boilerplate(text_content: str) -> str:
-    """
-    Cleans up crawled website boilerplate (headers, footers, navigation links, and images)
-    to leave only the core press release content.
-    """
     if not text_content:
         return ""
-    # Remove Markdown links and image tags
     text_content = re.sub(r'!\[.*?\]\(.*?\)', '', text_content)
     text_content = re.sub(r'\[.*?\]\(.*?\)', '', text_content)
     
-    # Remove standard RBI website header navigation lists
     header_keywords = [
         "Skip to main content", "Increase Font Size", "Apply Dark Theme", 
         "Change Language", "Beti Bachao Beti Padhao", "Opportunities@RBI", 
@@ -71,7 +66,6 @@ def execute_hybrid_search(user_query: str):
             query=query_vector,
             limit=5
         )
-        # Parse string IDs to native Python uuid.UUID objects
         semantic_ids = [
             uuid.UUID(r.payload["article_id"]) 
             for r in vector_res.points 
@@ -81,7 +75,7 @@ def execute_hybrid_search(user_query: str):
         print(f"Qdrant query error: {e}")
         semantic_ids = []
 
-    # 3. Neon DB lookup with Sector-wide Context Expansion
+    # 3. Neon DB lookup
     db = SessionLocal()
     db_results = []
     
@@ -124,16 +118,27 @@ def execute_hybrid_search(user_query: str):
     finally:
         db.close()
 
-    # 4. Live Indian Stock Market API Search
+    # 4. Smart Stock Market API Search Check
     live_stock_context = ""
-    target_ticker = resolve_ticker(user_query)
     
-    if target_ticker:
-        # Fetch real-time 10-day history table (First tries key, then defaults keyless)
-        live_stock_context = fetch_live_stock_history_table(target_ticker, days=10)
-        print(f"[QUERY PROCESSING] Pre-appended live stock prices for: {target_ticker}")
+    # Define keywords indicating the user wants real-time price rates
+    price_keywords = ["price", "rate", "stock", "share", "value", "gold", "usd", "inr", "close", "trade", "chart"]
+    query_lower = user_query.lower()
+    
+    # Check if the query asks for prices OR if Qdrant/Neon returned no articles
+    is_price_query = any(keyword in query_lower for keyword in price_keywords)
+    is_db_empty = len(db_results) == 0
+    
+    if is_price_query or is_db_empty:
+        target_ticker = resolve_ticker_dynamically(user_query)
+        if target_ticker:
+            # Fetch real-time 10-day history table
+            live_stock_context = fetch_live_stock_history_table(target_ticker, days=10)
+            print(f"[QUERY PROCESSING] Pre-appended live stock prices for: {target_ticker}")
+    else:
+        print("[QUERY PROCESSING] News found in database. Bypassing live stock API lookup to stay relevant.")
 
-    # 5. Formulate final synthesis context (combining news and live stock prices)
+    # 5. Formulate final synthesis context
     context_str = ""
     if live_stock_context:
         context_str += f"\n--- LIVE MARKET DATA ---\n{live_stock_context}\n"
@@ -141,8 +146,11 @@ def execute_hybrid_search(user_query: str):
     for idx, art in enumerate(db_results):
         context_str += f"\n--- ARTICLE {idx+1}: {art['title']} ---\nSource: {art['source']}\n{art['content'][:2000]}\n"
 
-    # Send final combined context to Groq to generate the final synthesized response
-    ai_prompt = get_context_explanation_prompt(user_query, context_str)
+    # Get Live Date/Time for Temporal Anchoring
+    current_time_str = datetime.now().strftime("%A, %d-%B-%Y %I:%M %p")
+
+    # Send final combined context to Groq
+    ai_prompt = get_context_explanation_prompt(user_query, context_str, current_time_str)
     
     try:
         explanation = query_groq(ai_prompt)

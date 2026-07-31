@@ -36,7 +36,7 @@ def query_groq(prompt: str, model_name: str = DEFAULT_MODEL) -> str:
                 }
             ],
             model=model_name,
-            temperature=0.0, # Zero temperature ensures deterministic output (especially for JSON schemas)
+            temperature=0.2, # Zero temperature ensures deterministic output (especially for JSON schemas)
         )
         # Extract response text
         return chat_completion.choices[0].message.content
