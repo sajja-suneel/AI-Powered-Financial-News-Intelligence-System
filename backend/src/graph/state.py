@@ -2,6 +2,7 @@
 from typing import TypedDict, List, Dict, Any, Optional
 
 class CleanedArticle(TypedDict):
+    """Cleaned article structure processed by the Ingestion Agent."""
     title: str
     content: str
     source: str
@@ -9,6 +10,9 @@ class CleanedArticle(TypedDict):
     url: str
 
 class AgentState(TypedDict):
+    """
+    Defines the shared memory state of the LangGraph Multi-Agent pipeline.
+    """
     # 1. Raw Data Input (passed when invoking the graph)
     raw_input: Dict[str, Any]
     

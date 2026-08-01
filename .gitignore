@@ -45,9 +45,15 @@ data/
 *.csv
 *.sqlite3
 
-# Logs
+# Logs (Ignore all standard Python, pip, and execution log files)
 *.log
 logs/
+*.log.*
+pip-log.txt
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.system_generated/logs/
 
 # IDEs and editors
 .vscode/
