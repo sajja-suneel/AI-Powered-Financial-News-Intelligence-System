@@ -3,7 +3,7 @@ from sqlalchemy import text
 from qdrant_client import models  # <-- IMPORT MODELS DIRECTLY FROM LIBRARY
 from config.database import SessionLocal, qdrant_client
 
-COLLECTION_NAME = "financial_news"
+COLLECTION_NAME = "financial_chatbot_news"
 
 def reset_databases():
     print("--- RESETTING DATABASES ---")
@@ -17,7 +17,7 @@ def reset_databases():
         db.execute(text("TRUNCATE TABLE entities CASCADE;"))
         db.execute(text("TRUNCATE TABLE articles CASCADE;"))
         db.commit()
-        print("✓ Neon tables cleared successfully.")
+        print("Neon tables cleared successfully.")
     except Exception as e:
         db.rollback()
         print(f"Error clearing Neon: {e}")
@@ -32,7 +32,7 @@ def reset_databases():
             collection_name=COLLECTION_NAME,
             points_selector=models.Filter()
         )
-        print("✓ Qdrant points cleared successfully.")
+        print("Qdrant points cleared successfully.")
     except Exception as e:
         print(f"Error clearing Qdrant: {e}")
         

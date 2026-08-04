@@ -4,6 +4,7 @@ import re
 import requests
 import yfinance as ticker_engine
 import pandas as pd
+from datetime import datetime
 from typing import Optional
 from dotenv import load_dotenv
 from src.utils.llm import query_groq
@@ -35,6 +36,8 @@ class StockMarketEngine:
             return "GOLDBEES.NS"
         if "reliance" in normalized_query:
             return "RELIANCE.NS"
+        if "sbi" in normalized_query:
+            return "SBIN.NS"
         if "tata" in normalized_query:
             return "TATAMOTORS.NS"
         if "nse" in normalized_query or "bse" in normalized_query:
@@ -143,24 +146,60 @@ class StockMarketEngine:
     @staticmethod
     def fetch_live_history_table(ticker: str, days: int = 10) -> str:
         """
-        Fetches stock history, falling back to Yahoo Finance if RapidAPI is unavailable or fails.
+        Fetches stock history, falling back to Yahoo Finance query1 JSON endpoint.
         """
         third_party_table = StockMarketEngine.fetch_from_third_party(ticker, days)
         if third_party_table:
             return third_party_table
             
         try:
-            logger.info(f"[STOCK API FALLBACK] Fetching via Yahoo Finance for: {ticker}")
-            stock = ticker_engine.Ticker(ticker)
-            hist = stock.history(period="1mo")
+            logger.info(f"[STOCK API FALLBACK] Fetching via Yahoo query1 JSON for: {ticker}")
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1mo&interval=1d"
+            response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
             
-            if hist.empty:
+            if response.status_code != 200:
                 return f"No stock data could be found for ticker {ticker}."
                 
-            last_n = hist.tail(days).copy()
-            last_n["Daily Change %"] = last_n["Close"].pct_change() * 100
-            last_n = last_n.sort_index(ascending=False)
+            data = response.json()
+            result = data.get("chart", {}).get("result", [None])[0]
+            if not result:
+                return f"No stock data could be found for ticker {ticker}."
+                
+            timestamps = result.get("timestamp", [])
+            indicators = result.get("indicators", {}).get("quote", [{}])[0]
+            closes = indicators.get("close", [])
             
+            # Align timestamps and close prices, filtering out None values
+            history = []
+            for t, c in zip(timestamps, closes):
+                if t is not None and c is not None:
+                    history.append((datetime.fromtimestamp(t), c))
+                    
+            if not history:
+                return f"No stock data could be found for ticker {ticker}."
+                
+            # Filter to requested number of days
+            history = history[-days:]
+            
+            # Compute daily changes in reverse order
+            table_rows = []
+            for i in range(len(history) - 1, -1, -1):
+                date_dt, close_val = history[i]
+                date_str = date_dt.strftime("%d-%b-%Y")
+                
+                # Percent change from previous day
+                if i > 0:
+                    prev_close = history[i - 1][1]
+                    change_pct = ((close_val - prev_close) / prev_close) * 100
+                    if change_pct >= 0:
+                        change_str = f"+{change_pct:.2f}%"
+                    else:
+                        change_str = f"{change_pct:.2f}%"
+                else:
+                    change_str = "-"
+                    
+                table_rows.append((date_str, close_val, change_str))
+                
             is_gold = (ticker == "GOLDBEES.NS")
             is_forex = ("=X" in ticker)
             
@@ -168,21 +207,9 @@ class StockMarketEngine:
             markdown_table += f"| Date | {'Exchange Rate (INR)' if is_forex else 'Price (₹)'} | Daily Change |\n"
             markdown_table += "| :--- | :--- | :--- |\n"
             
-            for date_timestamp, row in last_n.iterrows():
-                date_str = date_timestamp.strftime("%d-%b-%Y")
-                price = row['Close'] * 1000 if is_gold else row['Close']
-                
-                # Formatting: Forex rates use 4 decimals, equities use 2
-                price_str = f"{price:.4f}" if is_forex else f"{price:.2f}"
-                
-                change_val = row["Daily Change %"]
-                if pd.isna(change_val):
-                    change_str = "-"
-                elif change_val >= 0:
-                    change_str = f"+{change_val:.2f}%"
-                else:
-                    change_str = f"{change_val:.2f}%"
-                    
+            for date_str, price, change_str in table_rows:
+                display_price = price * 1000 if is_gold else price
+                price_str = f"{display_price:.4f}" if is_forex else f"{display_price:.2f}"
                 markdown_table += f"| {date_str} | {price_str} | {change_str} |\n"
                 
             return markdown_table
@@ -196,4 +223,4 @@ class StockMarketEngine:
 # ----------------------------------------------------
 resolve_ticker_dynamically = StockMarketEngine.resolve_ticker
 fetch_from_third_party_api = StockMarketEngine.fetch_from_third_party
-fetch_live_stock_history_table = StockMarketEngine.fetch_live_history_table
+fetch_live_stock_history_table = StockMarketEngine.fetch_live_history_table

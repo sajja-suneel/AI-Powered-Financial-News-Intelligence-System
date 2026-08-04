@@ -14,20 +14,24 @@ if sys.platform == 'win32':
 # Configuration
 RBI_BASE_URL = "https://www.rbi.org.in/Scripts/"
 RBI_INDEX_URL = "https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx"
+BSE_BASE_URL = "https://www.bseindia.com/"
+NSE_BASE_URL = "https://www.nseindia.com/"
 
 
 # Safe RSS feeds to bypass Akamai/Cloudflare blocks
 RSS_FEEDS = {
     "Economic Times Markets": "https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms",
     "BSE / NSE Corporate Actions (Moneycontrol Mirror)": "https://www.moneycontrol.com/rss/marketreports.xml",
-    "Markets Business Feed": "https://www.moneycontrol.com/rss/business.xml",  # <-- Added missing comma here
+    "Markets Business Feed": "https://www.moneycontrol.com/rss/business.xml",
     "Livemint Market News": "https://www.livemint.com/rss/markets",
-    "Financial Express Market News": "https://www.financialexpress.com/market/feed/",
+    "Financial Express Market News": "https://news.google.com/rss/search?q=site:financialexpress.com/market+OR+site:financialexpress.com/economy&hl=en-IN&gl=IN&ceid=IN:en",
     "Trade Brains Market News": "https://www.tradebrains.in/feed/",
-    "Business Standard Markets": "https://www.business-standard.com/rss/markets-106.rss"
+    "Business Standard Markets": "https://news.google.com/rss/search?q=site:business-standard.com/markets+OR+site:business-standard.com/economy&hl=en-IN&gl=IN&ceid=IN:en"
 }
 
 OUTPUT_FILE_RBI = "data/raw_rbi.json"
+OUTPUT_FILE_BSE = "data/raw_bse.json"
+OUTPUT_FILE_NSE = "data/raw_nse.json"
 OUTPUT_FILE_EXCHANGES = "data/raw_exchanges.json"
 
 # ----------------------------------------------------
@@ -106,8 +110,8 @@ def scrape_rss_exchanges(limit: int = 10) -> list:
         print(f"Parsing Feed: {feed_name}")
         feed = feedparser.parse(feed_url)
         
-        if feed.bozo:
-            print(f"Warning: Failed to parse feed {feed_name}. Skipping...")
+        if not feed.entries:
+            print(f"Warning: Failed to parse feed {feed_name} (no entries found). Skipping...")
             continue
             
         print(f"Found {len(feed.entries)} entries. Collecting top {limit}...")
@@ -132,6 +136,60 @@ def scrape_rss_exchanges(limit: int = 10) -> list:
         
     return scraped_news
 
+
+def scrape_bse_announcements(limit: int = 10) -> list:
+    print("\n--- [BSE SCRAPING] Fetching latest corporate announcements ---")
+    bse_feed_url = "https://news.google.com/rss/search?q=site:bseindia.com+OR+site:moneycontrol.com/company-notices/bse&hl=en-IN&gl=IN&ceid=IN:en"
+    feed = feedparser.parse(bse_feed_url)
+    
+    scraped_announcements = []
+    if feed.entries:
+        print(f"Found {len(feed.entries)} BSE entries. Collecting top {limit}...")
+        for entry in feed.entries[:limit]:
+            clean_summary = BeautifulSoup(entry.summary, "html.parser").get_text() if "summary" in entry else ""
+            scraped_announcements.append({
+                "title": entry.title,
+                "content": clean_summary,
+                "source": "BSE Announcement",
+                "published_at": entry.get("published", "Today"),
+                "url": entry.link
+            })
+            
+    if scraped_announcements:
+        os.makedirs(os.path.dirname(OUTPUT_FILE_BSE), exist_ok=True)
+        with open(OUTPUT_FILE_BSE, "w", encoding="utf-8") as f:
+            json.dump(scraped_announcements, f, indent=4, ensure_ascii=False)
+        print(f"--> SUCCESS: Saved {len(scraped_announcements)} BSE announcements to {OUTPUT_FILE_BSE}")
+        
+    return scraped_announcements
+
+
+def scrape_nse_announcements(limit: int = 10) -> list:
+    print("\n--- [NSE SCRAPING] Fetching latest corporate announcements ---")
+    nse_feed_url = "https://news.google.com/rss/search?q=site:nseindia.com+OR+site:moneycontrol.com/company-notices/nse&hl=en-IN&gl=IN&ceid=IN:en"
+    feed = feedparser.parse(nse_feed_url)
+    
+    scraped_announcements = []
+    if feed.entries:
+        print(f"Found {len(feed.entries)} NSE entries. Collecting top {limit}...")
+        for entry in feed.entries[:limit]:
+            clean_summary = BeautifulSoup(entry.summary, "html.parser").get_text() if "summary" in entry else ""
+            scraped_announcements.append({
+                "title": entry.title,
+                "content": clean_summary,
+                "source": "NSE Announcement",
+                "published_at": entry.get("published", "Today"),
+                "url": entry.link
+            })
+            
+    if scraped_announcements:
+        os.makedirs(os.path.dirname(OUTPUT_FILE_NSE), exist_ok=True)
+        with open(OUTPUT_FILE_NSE, "w", encoding="utf-8") as f:
+            json.dump(scraped_announcements, f, indent=4, ensure_ascii=False)
+        print(f"--> SUCCESS: Saved {len(scraped_announcements)} NSE announcements to {OUTPUT_FILE_NSE}")
+        
+    return scraped_announcements
+
 # ----------------------------------------------------
 # Main Orchestrator Run Loop
 # ----------------------------------------------------
@@ -143,7 +201,13 @@ async def run_daily_scraping():
     # 1. Scrape RBI (10 detail pages)
     await scrape_rbi_press_releases(limit=10)
     
-    # 2. Scrape all RSS Feeds (10 articles per feed)
+    # 2. Scrape BSE Announcements (10 announcements)
+    scrape_bse_announcements(limit=10)
+    
+    # 3. Scrape NSE Announcements (10 announcements)
+    scrape_nse_announcements(limit=10)
+    
+    # 4. Scrape all RSS Feeds (10 articles per feed)
     scrape_rss_exchanges(limit=10)
     
     print("\n====================================================")

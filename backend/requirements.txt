@@ -10,5 +10,9 @@ uvicorn
 python-dotenv
 sqlalchemy
 feedparser
-en_core_web_sm 
- yfinance
+yfinance
+requests
+beautifulsoup4
+pymupdf
+pytesseract
+pillow

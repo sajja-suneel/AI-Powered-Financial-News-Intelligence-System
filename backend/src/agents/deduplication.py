@@ -12,7 +12,7 @@ class DeduplicationAgent:
     Evaluates incoming cleaned articles for uniqueness by executing semantic vector searches
     on Qdrant Cloud and detecting duplicates using cosine similarity scores.
     """
-    COLLECTION_NAME = "financial_news"
+    COLLECTION_NAME = "financial_chatbot_news"
     SIMILARITY_THRESHOLD = 0.90
 
     @staticmethod

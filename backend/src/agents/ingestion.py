@@ -25,6 +25,15 @@ class IngestionAgent:
             state["errors"].append("Ingestion Agent: Missing required 'title' or 'content' fields.")
             return state
             
+        # Reject blocked or Access Denied pages from index ingestion
+        blocked_keywords = ["access denied", "attention required", "cloudflare", "captcha", "security check", "forbidden"]
+        content_lower = content.lower()
+        title_lower = title.lower()
+        if any(kw in content_lower for kw in blocked_keywords) or any(kw in title_lower for kw in blocked_keywords):
+            logger.error(f"[INGESTION ERROR] Scraper was blocked by destination host: '{title}'.")
+            state["errors"].append(f"Ingestion Agent: Scraper blocked or Access Denied page detected: '{title}'.")
+            return state
+            
         state["cleaned_article"] = {
             "title": title.strip(),
             "content": content.strip(),

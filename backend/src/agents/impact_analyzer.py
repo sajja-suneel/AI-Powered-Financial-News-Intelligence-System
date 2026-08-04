@@ -57,14 +57,28 @@ class ImpactAnalyzerAgent:
             # Graceful Fallback: Map a neutral baseline impact to prevent crashes
             fallback_impacts = []
             for entity in state.get("entities", []):
-                if entity["category"] == "Company":
-                    fallback_impacts.append({
-                        "symbol": entity["name"][:10].upper(), # Generate a dummy symbol
-                        "confidence": 0.5,
-                        "type": "direct",
-                        "sentiment": "neutral",
-                        "reasoning": "Article mentions company. LLM impact analysis was bypassed."
-                    })
+                cat = entity.get("category", "")
+                if cat == "Company":
+                    imp_type = "direct"
+                    conf = 0.8
+                elif cat == "Sector":
+                    imp_type = "sector"
+                    conf = 0.5
+                elif cat == "Regulator":
+                    imp_type = "regulatory"
+                    conf = 0.2
+                else:
+                    continue
+                
+                # Generate a safe symbol candidate
+                symbol_candidate = entity["name"].split()[0].upper()[:10]
+                fallback_impacts.append({
+                    "symbol": symbol_candidate,
+                    "confidence": conf,
+                    "type": imp_type,
+                    "sentiment": "neutral",
+                    "reasoning": f"Baseline fallback neutral assessment for {cat} entity: '{entity['name']}'."
+                })
             state["impacted_stocks"] = fallback_impacts
             logger.info(f"--> Populated {len(state['impacted_stocks'])} baseline stock impacts.")
             

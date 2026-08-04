@@ -215,8 +215,16 @@ async def ingest_by_url(payload: UrlIngest):
         result_state = agent_app.invoke(initial_state)
         
         if result_state.get("errors"):
-             logger.error(f"Agent pipeline errors: {result_state['errors']}")
-             raise HTTPException(status_code=500, detail=f"Agent pipeline errors: {result_state['errors']}")
+             errors = result_state['errors']
+             logger.error(f"Agent pipeline errors: {errors}")
+             # Return clean API error responses instead of 500 exceptions on crawler blocks
+             for err in errors:
+                 if "Access Denied" in err or "blocked" in err.lower() or "cloudflare" in err.lower():
+                     raise HTTPException(
+                         status_code=403, 
+                         detail=f"Scraping blocked: The target website blocked the request with an Access Denied / 403 response. Original error: {err}"
+                     )
+             raise HTTPException(status_code=500, detail=f"Agent pipeline errors: {errors}")
              
         return {
             "status": "Success",
@@ -236,6 +244,8 @@ def trigger_bulk_ingestion():
     try:
         # Use class-based Bulkingester to process staged json caches
         rbi_count = BulkIngester.ingest_from_file("data/raw_rbi.json", "RBI")
+        bse_count = BulkIngester.ingest_from_file("data/raw_bse.json", "BSE")
+        nse_count = BulkIngester.ingest_from_file("data/raw_nse.json", "NSE")
         exchange_count = BulkIngester.ingest_from_file("data/raw_exchanges.json", "Exchanges")
         
         return {
@@ -243,6 +253,8 @@ def trigger_bulk_ingestion():
             "message": "Bulk files ingested successfully.",
             "details": {
                 "rbi_ingested": rbi_count,
+                "bse_ingested": bse_count,
+                "nse_ingested": nse_count,
                 "exchanges_ingested": exchange_count
             }
         }

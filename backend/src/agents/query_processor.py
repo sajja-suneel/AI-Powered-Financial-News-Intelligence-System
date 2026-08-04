@@ -18,13 +18,14 @@ from src.utils.prompts import (
 )
 from src.utils.stock_api import resolve_ticker_dynamically, fetch_live_stock_history_table
 
+
 logger = get_logger("agent.query_processor")
 
 class BM25Okapi:
     """
     Lightweight, self-contained BM25 Okapi lexical ranking implementation.
     """
-    def __init__(self, corpus: List[List[str]], k1: float = 1.5, b: float = 0.75):
+    def __init__(self, corpus: List[List[str]], k1: float = 1.2, b: float = 0.75):
         self.k1 = k1
         self.b = b
         self.corpus_size = len(corpus)
@@ -76,7 +77,10 @@ class QueryProcessor:
     Manages the hybrid search execution (vector search on Qdrant + relational queries on Neon)
     and handles temporal-anchored RAG context generation with Groq.
     """
-    COLLECTION_NAME = "financial_news"
+    COLLECTION_NAME = "financial_chatbot_news"
+    SEMANTIC_TOP_K = 15
+    FINAL_CONTEXT_K = 5
+    SCORE_THRESHOLD = 0.60  # Optional score threshold (0.0 means no threshold filter)
     
     # Expanded keyword list to trigger live lookup for stock prices, gold, forex, and company profits
     FINANCIAL_KEYWORDS = [
@@ -134,7 +138,14 @@ class QueryProcessor:
         try:
             # Query Groq using System & User intent prompts
             response = query_groq(user_prompt=intent_user, system_prompt=intent_sys)
-            clean_response = response.strip().replace("```json", "").replace("```", "")
+            
+            # Extract JSON block using regex to avoid trailing text errors
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                clean_response = json_match.group(0)
+            else:
+                clean_response = response.strip().replace("```json", "").replace("```", "")
+                
             intent = json.loads(clean_response)
             company_filter = intent.get("company")
             sector_filter = intent.get("sector")
@@ -170,7 +181,8 @@ class QueryProcessor:
                 vector_res = qdrant_client.query_points(
                     collection_name=QueryProcessor.COLLECTION_NAME,
                     query=query_vector,
-                    limit=10
+                    limit=QueryProcessor.SEMANTIC_TOP_K,
+                    score_threshold=QueryProcessor.SCORE_THRESHOLD if QueryProcessor.SCORE_THRESHOLD > 0.0 else None
                 )
                 for rank, point in enumerate(vector_res.points, 1):
                     if "article_id" in point.payload:
@@ -245,7 +257,7 @@ class QueryProcessor:
                 score += 1.0 / (RRF_K + metadata_ranks[art_id])
             rrf_scores[art_id] = score
             
-        sorted_art_ids = sorted(all_candidate_ids, key=lambda x: rrf_scores[x], reverse=True)[:5]
+        sorted_art_ids = sorted(all_candidate_ids, key=lambda x: rrf_scores[x], reverse=True)[:QueryProcessor.FINAL_CONTEXT_K]
 
         # Retrieve detailed rows in fused sorting order
         db_results = []
@@ -253,40 +265,37 @@ class QueryProcessor:
         for art_id in sorted_art_ids:
             if art_id in articles_by_id:
                 art = articles_by_id[art_id]
+                raw_content = art["content"] or ""
+                
+                # Smart Slicing: Slice long articles but always retain the table block at the bottom
+                limit_chars = 10000
+                if len(raw_content) > limit_chars:
+                    table_marker = "### Extracted Data Tables"
+                    marker_idx = raw_content.find(table_marker)
+                    if marker_idx != -1:
+                        sliced_content = raw_content[:limit_chars] + "\n\n" + raw_content[marker_idx:]
+                    else:
+                        sliced_content = raw_content[:limit_chars]
+                else:
+                    sliced_content = raw_content
+                
                 db_results.append({
                     "id": art["id"],
                     "title": art["title"],
-                    "content": QueryProcessor._clean_rbi_boilerplate(art["content"]),
+                    "content": QueryProcessor._clean_rbi_boilerplate(sliced_content),
                     "source": art["source"],
                     "published_at": art["published_at"].isoformat() if hasattr(art["published_at"], "isoformat") else str(art["published_at"]) if art["published_at"] else None
                 })
 
-        # 6. Smart Stock Market API Search Check
-        live_stock_context = ""
-        is_db_empty = len(db_results) == 0
-        
-        # We now ONLY hit the stock API if Qdrant and Neon returned ZERO articles.
-        # This prioritizes the database first.
-        if is_db_empty:
-            target_ticker = resolve_ticker_dynamically(user_query)
-            if target_ticker:
-                live_stock_context = fetch_live_stock_history_table(target_ticker, days=10)
-                logger.info(f"[QUERY PROCESSING] Database was empty. Pre-appended live stock prices for: {target_ticker}")
-        else:
-            logger.info("[QUERY PROCESSING] News found in database. Bypassing live stock API lookup.")
-
-        # 7. Formulate final synthesis context
+        # 6. Build initial database context string
         context_str = ""
-        if live_stock_context:
-            context_str += f"\n--- LIVE MARKET DATA ---\n{live_stock_context}\n"
-            
         for idx, art in enumerate(db_results):
-            context_str += f"\n--- ARTICLE {idx+1}: {art['title']} ---\nSource: {art['source']}\n{art['content'][:2000]}\n"
+            context_str += f"\n--- ARTICLE {idx+1}: {art['title']} ---\nSource: {art['source']}\n{art['content']}\n"
 
         # Get Live Date/Time for Temporal Anchoring
         current_time_str = datetime.now().strftime("%A, %d-%B-%Y %I:%M %p")
 
-        # 8. Retrieve split System & User prompts for Groq
+        # 7. Generate primary database-only RAG response
         system_prompt = get_explanation_system_prompt(current_time_str)
         user_prompt = get_explanation_user_prompt(user_query, context_str)
         
@@ -294,7 +303,35 @@ class QueryProcessor:
             explanation = query_groq(user_prompt=user_prompt, system_prompt=system_prompt)
         except Exception as e:
             logger.error(f"Error generating explanation: {e}")
-            explanation = f"Error generating explanation: {e}."
+            explanation = "Information not found in the financial knowledge base."
+
+        # 8. Live Stock API Search Fallback (Triggered if database returned no answers/matches)
+        fallback_phrases = [
+            "information not found in the financial knowledge base",
+            "not found in the financial knowledge base",
+            "do not have this information",
+            "do not have access to real-time",
+            "cannot find"
+        ]
+        
+        if len(db_results) == 0 or any(p in explanation.lower() for p in fallback_phrases):
+            FINANCIAL_KEYWORDS = [
+                "price", "rate", "stock", "share", "value", "gold", "usd", "inr", 
+                "close", "trade", "chart", "profit", "loss", "revenue"
+            ]
+            if any(kw in user_query.lower() for kw in FINANCIAL_KEYWORDS):
+                ticker = resolve_ticker_dynamically(user_query)
+                if ticker:
+                    logger.info(f"[QUERY PROCESSING] Database yielded no specific matches. Fallback to Stock API for: {ticker}")
+                    live_stock_context = fetch_live_stock_history_table(ticker)
+                    if live_stock_context and "offline" not in live_stock_context.lower():
+                        # Re-run synthesis using the live market data context
+                        live_context_str = f"\n--- LIVE MARKET DATA ---\n{live_stock_context}\n"
+                        user_prompt_live = get_explanation_user_prompt(user_query, live_context_str)
+                        try:
+                            explanation = query_groq(user_prompt=user_prompt_live, system_prompt=system_prompt)
+                        except Exception as e:
+                            logger.error(f"Error generating live stock explanation: {e}")
 
         return {
             "query": user_query,
@@ -304,4 +341,4 @@ class QueryProcessor:
 
 # Module-level alias for backward compatibility
 execute_hybrid_search = QueryProcessor.execute_search
-
+

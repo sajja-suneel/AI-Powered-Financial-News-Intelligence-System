@@ -44,6 +44,8 @@ data/
 *.json
 *.csv
 *.sqlite3
+output/
+backend/output/chats/images/metadata/network/pages/pdfs/tables
 
 # Logs (Ignore all standard Python, pip, and execution log files)
 *.log

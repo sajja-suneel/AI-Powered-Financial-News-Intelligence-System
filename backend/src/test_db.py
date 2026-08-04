@@ -39,7 +39,7 @@ def test_neon_connection():
 
 def test_qdrant_connection():
     print("\n--- 2. Testing Qdrant Cloud Connection ---")
-    COLLECTION_NAME = "financial_news"
+    COLLECTION_NAME = "financial_chatbot_news"
     try:
         # Check if we can fetch collections
         collections = qdrant_client.get_collections().collections
@@ -49,8 +49,8 @@ def test_qdrant_connection():
             
         # Try a test point upsert
         test_id = str(uuid.uuid4())
-        # Mock vector (384 dimensions filled with 0.1)
-        mock_vector = [0.1] * 384
+        # Mock vector (768 dimensions filled with 0.1)
+        mock_vector = [0.1] * 768
         
         qdrant_client.upsert(
             collection_name=COLLECTION_NAME,

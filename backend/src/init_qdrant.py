@@ -2,34 +2,24 @@
 from qdrant_client.http import models
 from config.database import qdrant_client
 
-class QdrantInitializer:
-    """
-    Initializes semantic vector search collections on Qdrant Cloud.
-    """
-    COLLECTION_NAME = "financial_news"
-    VECTOR_DIMENSIONS = 384  # Size of 'all-MiniLM-L6-v2' vector embeddings
+COLLECTION_NAME = "financial_chatbot_news"
 
-    @staticmethod
-    def run():
-        # 1. Fetch existing collections
-        collections = qdrant_client.get_collections().collections
-        exists = any(c.name == QdrantInitializer.COLLECTION_NAME for c in collections)
-        
-        if exists:
-            print(f"Collection '{QdrantInitializer.COLLECTION_NAME}' already exists on Qdrant Cloud.")
-            return
+try:
+    if qdrant_client.collection_exists(COLLECTION_NAME):
+        print(f"Deleting existing collection '{COLLECTION_NAME}'...")
+        qdrant_client.delete_collection(COLLECTION_NAME)
+except Exception as e:
+    print(f"Error checking/deleting collection: {e}")
 
-        print(f"Creating Qdrant collection: '{QdrantInitializer.COLLECTION_NAME}'...")
-        
-        # 2. Create the collection config
-        qdrant_client.create_collection(
-            collection_name=QdrantInitializer.COLLECTION_NAME,
-            vectors_config=models.VectorParams(
-                size=QdrantInitializer.VECTOR_DIMENSIONS,
-                distance=models.Distance.COSINE
-            )
+print(f"Recreating collection '{COLLECTION_NAME}' with 768-dimensional dense vectors...")
+try:
+    qdrant_client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=models.VectorParams(
+            size=768,  # Size of 'all-mpnet-base-v2' vector embeddings
+            distance=models.Distance.COSINE
         )
-        print("Collection created successfully on Qdrant Cloud!")
-
-if __name__ == "__main__":
-    QdrantInitializer.run()
+    )
+    print("Collection created successfully on Qdrant Cloud!")
+except Exception as e:
+    print(f"Error creating collection: {e}")

@@ -15,7 +15,7 @@ class LlmEngine:
     to execute high-precision chat completion queries.
     """
     _client_instance = None
-    DEFAULT_MODEL = "llama-3.1-8b-instant"
+    DEFAULT_MODEL = "llama-3.1-8b-instant" 
 
     @classmethod
     def get_client(cls) -> Groq:
@@ -54,7 +54,8 @@ class LlmEngine:
             chat_completion = client.chat.completions.create(
                 messages=messages,
                 model=model_name,
-                temperature=0.2  # Ensures deterministic output for JSON schemas and filters
+                temperature=0.0,  # 0.0 prevents hallucinating stock numbers or metadata
+                max_tokens=1500   # Limits response size to prevent token runaways
             )
             return chat_completion.choices[0].message.content
             
@@ -65,4 +66,4 @@ class LlmEngine:
 # ----------------------------------------------------
 # Module-level alias to keep other files backward-compatible
 # ----------------------------------------------------
-query_groq = LlmEngine.query
+query_groq = LlmEngine.query
