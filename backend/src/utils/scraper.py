@@ -527,6 +527,17 @@ class WebScraper:
             if table_md_blocks:
                 markdown_text += "\n\n### Extracted Data Tables\n\n" + "\n\n".join(table_md_blocks)
 
+        # Check if the extracted text or page content is a raw JSON string and format it as markdown
+        json_markdown = WebScraper.convert_raw_json_text_to_markdown(markdown_text)
+        if json_markdown != markdown_text:
+            markdown_text = json_markdown
+        else:
+            # Check raw soup text fallback in case Crawl4AI returned empty or standard templates
+            soup_txt = soup.get_text().strip()
+            json_markdown_soup = WebScraper.convert_raw_json_text_to_markdown(soup_txt)
+            if json_markdown_soup != soup_txt:
+                markdown_text = json_markdown_soup
+
         page_filename = f"{output_dirs['pages']}/{slug}.txt"
         with open(page_filename, "w", encoding="utf-8") as f:
             f.write(markdown_text)
@@ -647,3 +658,47 @@ class WebScraper:
         if not articles:
             raise ValueError(f"No records found in {file_path}")
         return articles[-1]
+
+    @staticmethod
+    def convert_raw_json_text_to_markdown(raw_text: str) -> str:
+        """
+        Detects if raw_text is a JSON string and converts it to a structured Markdown format 
+        (tables for list of objects, key-value tables for dictionaries).
+        """
+        if not raw_text:
+            return ""
+        cleaned = raw_text.strip()
+        if not (cleaned.startswith("{") or cleaned.startswith("[")):
+            return raw_text
+            
+        try:
+            data = json.loads(cleaned)
+            # Scenario A: List of dictionaries (converts to a table)
+            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                headers = list(data[0].keys())
+                md_rows = []
+                md_rows.append("| " + " | ".join(headers) + " |")
+                md_rows.append("| " + " | ".join(["---"] * len(headers)) + " |")
+                for item in data:
+                    row_cells = [str(item.get(h, "")) for h in headers]
+                    md_rows.append("| " + " | ".join(row_cells) + " |")
+                return "\n".join(md_rows)
+                
+            # Scenario B: Single dictionary (converts to key-value table)
+            elif isinstance(data, dict):
+                md_rows = []
+                md_rows.append("| Key | Value |")
+                md_rows.append("| --- | --- |")
+                for key, val in data.items():
+                    if isinstance(val, (dict, list)):
+                        val_str = json.dumps(val)
+                    else:
+                        val_str = str(val)
+                    md_rows.append(f"| {key} | {val_str} |")
+                return "\n".join(md_rows)
+                
+            # Scenario C: Default fallback representation
+            else:
+                return "```json\n" + json.dumps(data, indent=2) + "\n```"
+        except Exception:
+            return raw_text

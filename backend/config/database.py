@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from qdrant_client import QdrantClient
+from pymongo import MongoClient
 
 # Load variables from .env file
 load_dotenv()
@@ -38,6 +39,24 @@ class DbConnectionManager:
         timeout=60.0
     )
 
+    # 3. Establish MongoDB Client Configuration for Chat History
+    MONGO_URI = os.getenv("MONGO_URI")
+    MONGO_DATABASE = os.getenv("MONGO_DATABASE", "financial_chatbot")
+    mongo_client = None
+    mongo_db = None
+    if MONGO_URI:
+        try:
+            mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+            mongo_db = mongo_client[MONGO_DATABASE]
+            # Verify connection works
+            mongo_client.admin.command('ping')
+            print(f"[MONGODB SUCCESS] Connected to MongoDB Atlas. Database: '{MONGO_DATABASE}'")
+        except Exception as e:
+            print(f"[MONGODB CONNECTION ERROR] Failed to connect to MongoDB at '{MONGO_URI}': {e}")
+            mongo_db = None
+    else:
+        print("[MONGODB WARNING] MONGO_URI environment variable is not set. Chat history storage will be disabled.")
+
     @staticmethod
     def get_db():
         """Dependency helper to get PostgreSQL session"""
@@ -54,4 +73,5 @@ engine = DbConnectionManager.engine
 SessionLocal = DbConnectionManager.SessionLocal
 Base = DbConnectionManager.Base
 qdrant_client = DbConnectionManager.qdrant_client
+mongo_db = DbConnectionManager.mongo_db
 get_db = DbConnectionManager.get_db

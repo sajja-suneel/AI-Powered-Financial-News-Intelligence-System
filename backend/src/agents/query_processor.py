@@ -79,7 +79,7 @@ class QueryProcessor:
     """
     COLLECTION_NAME = "financial_chatbot_news"
     SEMANTIC_TOP_K = 15
-    FINAL_CONTEXT_K = 5
+    FINAL_CONTEXT_K = 2
     SCORE_THRESHOLD = 0.60  # Optional score threshold (0.0 means no threshold filter)
     
     # Expanded keyword list to trigger live lookup for stock prices, gold, forex, and company profits
@@ -268,12 +268,12 @@ class QueryProcessor:
                 raw_content = art["content"] or ""
                 
                 # Smart Slicing: Slice long articles but always retain the table block at the bottom
-                limit_chars = 10000
+                limit_chars = 20000
                 if len(raw_content) > limit_chars:
                     table_marker = "### Extracted Data Tables"
                     marker_idx = raw_content.find(table_marker)
                     if marker_idx != -1:
-                        sliced_content = raw_content[:limit_chars] + "\n\n" + raw_content[marker_idx:]
+                        sliced_content = raw_content[:limit_chars] + "\n\n" + raw_content[marker_idx:marker_idx + 5000]
                     else:
                         sliced_content = raw_content[:limit_chars]
                 else:
